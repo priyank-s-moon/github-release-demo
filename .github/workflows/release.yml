@@ -7,6 +7,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+  pull-requests: read
+
 jobs:
   release:
     if: >
@@ -18,11 +22,34 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest release tag
+        id: version
+        run: |
+          latest_tag=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+
+          if [ -z "$latest_tag" ]; then
+            latest_tag="v0.0.0"
+          fi
+
+          echo "Latest release: $latest_tag"
+
+          version=${latest_tag#v}
+
+          IFS='.' read -r major minor patch <<< "$version"
+
+          patch=$((patch + 1))
+
+          next_version="v${major}.${minor}.${patch}"
+
+          echo "Next release: $next_version"
+
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "next_version=$next_version" >> "$GITHUB_OUTPUT"
 
       - name: Display release information
         run: |
-          echo "Release PR merged!"
-          echo "PR: #${{ github.event.pull_request.number }}"
-          echo "Title: ${{ github.event.pull_request.title }}"
-          echo "Source: ${{ github.event.pull_request.head.ref }}"
-          echo "Target: ${{ github.event.pull_request.base.ref }}"
+          echo "Previous release: ${{ steps.version.outputs.latest_tag }}"
+          echo "Next release: ${{ steps.version.outputs.next_version }}"
