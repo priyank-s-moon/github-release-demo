@@ -1,0 +1,355 @@
+name: Release
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release:
+    if: >
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'staging'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      # --------------------------------------------------
+      # Checkout repository
+      # --------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --------------------------------------------------
+      # Calculate next release version
+      # --------------------------------------------------
+      - name: Calculate next release version
+        id: version
+        run: |
+          echo "Finding latest release tag..."
+
+          latest_tag=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+
+          if [ -z "$latest_tag" ]; then
+            latest_tag="v0.0.0"
+          fi
+
+          echo "Previous release: $latest_tag"
+
+          version=${latest_tag#v}
+
+          IFS='.' read -r major minor patch <<< "$version"
+
+          patch=$((patch + 1))
+
+          next_version="v${major}.${minor}.${patch}"
+
+          echo "Next release: $next_version"
+
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "next_version=$next_version" >> "$GITHUB_OUTPUT"
+
+      # --------------------------------------------------
+      # Get release commit
+      # --------------------------------------------------
+      - name: Get release commit
+        id: release_commit
+        run: |
+          release_commit="${{ github.event.pull_request.merge_commit_sha }}"
+
+          echo "Release commit: $release_commit"
+
+          echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
+
+      # --------------------------------------------------
+      # Find PRs included in this release
+      # --------------------------------------------------
+      - name: Find PRs included in release
+        id: prs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.latest_tag }}
+          RELEASE_COMMIT: ${{ steps.release_commit.outputs.release_commit }}
+          RELEASE_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "Finding commits between:"
+          echo "Previous release: $PREVIOUS_TAG"
+          echo "Current release commit: $RELEASE_COMMIT"
+
+          git log \
+            --format="%H" \
+            "$PREVIOUS_TAG..$RELEASE_COMMIT" \
+            > release-commits.txt
+
+          echo ""
+          echo "Commits included in release:"
+          cat release-commits.txt
+
+          echo "[]" > release-prs.json
+
+          while IFS= read -r commit_sha; do
+
+            [ -z "$commit_sha" ] && continue
+
+            echo ""
+            echo "Checking commit: $commit_sha"
+
+            prs_for_commit=$(gh api \
+              "repos/${{ github.repository }}/commits/$commit_sha/pulls" \
+              --jq '
+                [
+                  .[]
+                  | {
+                      number: .number,
+                      title: .title,
+                      body: .body,
+                      branch: .head.ref,
+                      author: .user.login,
+                      mergedAt: .merged_at
+                    }
+                ]
+              ')
+
+            if [ -n "$prs_for_commit" ] && [ "$prs_for_commit" != "[]" ]; then
+
+              echo "$prs_for_commit" > current-prs.json
+
+              jq -s 'add' release-prs.json current-prs.json \
+                | jq 'unique_by(.number)' \
+                > release-prs-new.json
+
+              mv release-prs-new.json release-prs.json
+
+            fi
+
+          done < release-commits.txt
+
+          # Remove the staging -> main release PR itself
+          jq \
+            --arg release_pr "$RELEASE_PR_NUMBER" \
+            'map(select((.number | tostring) != $release_pr))' \
+            release-prs.json \
+            > release-prs-filtered.json
+
+          mv release-prs-filtered.json release-prs.json
+
+          echo ""
+          echo "========================================="
+          echo "PRs included in this release"
+          echo "========================================="
+
+          cat release-prs.json
+
+      # --------------------------------------------------
+      # Generate GitHub Release changelog
+      # --------------------------------------------------
+      - name: Generate release notes
+        env:
+          VERSION: ${{ steps.version.outputs.next_version }}
+          PREVIOUS_VERSION: ${{ steps.version.outputs.latest_tag }}
+          RELEASE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          RELEASE_PR_TITLE: ${{ github.event.pull_request.title }}
+          RELEASE_MERGED_AT: ${{ github.event.pull_request.merged_at }}
+        run: |
+          export RELEASE_DATE=$(date -u +"%Y-%m-%d")
+
+          python <<'PY'
+          import json
+          import os
+
+          version = os.environ["VERSION"]
+          previous_version = os.environ["PREVIOUS_VERSION"]
+          release_pr_number = os.environ["RELEASE_PR_NUMBER"]
+          release_pr_title = os.environ["RELEASE_PR_TITLE"]
+          release_merged_at = os.environ["RELEASE_MERGED_AT"]
+          release_date = os.environ["RELEASE_DATE"]
+
+          with open("release-prs.json", "r", encoding="utf-8") as file:
+              prs = json.load(file)
+
+          prs = sorted(
+              prs,
+              key=lambda pr: pr.get("mergedAt") or ""
+          )
+
+          lines = []
+
+          # ---------------------------------------------
+          # Release information
+          # ---------------------------------------------
+
+          lines.append("## Release Information")
+          lines.append("")
+
+          lines.append(
+              f"- **Previous Release:** `{previous_version}`"
+          )
+
+          lines.append(
+              f"- **Current Release:** `{version}`"
+          )
+
+          lines.append(
+              f"- **Release PR:** #{release_pr_number}"
+          )
+
+          lines.append(
+              f"- **Release PR Title:** {release_pr_title}"
+          )
+
+          lines.append(
+              f"- **Release Date:** {release_date}"
+          )
+
+          lines.append(
+              f"- **Merged At:** {release_merged_at}"
+          )
+
+          lines.append(
+              "- **Source Branch:** `staging`"
+          )
+
+          lines.append(
+              "- **Target Branch:** `main`"
+          )
+
+          lines.append("")
+
+          # ---------------------------------------------
+          # Pull requests
+          # ---------------------------------------------
+
+          lines.append("## Pull Requests")
+          lines.append("")
+
+          if not prs:
+
+              lines.append(
+                  "No feature or bug-fix pull requests were "
+                  "included in this release."
+              )
+
+              lines.append("")
+
+          else:
+
+              for pr in prs:
+
+                  number = pr.get("number")
+                  title = pr.get("title") or "Untitled PR"
+                  branch = pr.get("branch") or "unknown"
+                  author = pr.get("author") or "unknown"
+                  merged_at = pr.get("mergedAt") or "unknown"
+                  body = (pr.get("body") or "").strip()
+
+                  lines.append(
+                      f"### #{number} — {title}"
+                  )
+
+                  lines.append("")
+
+                  lines.append(
+                      f"- **Branch:** `{branch}`"
+                  )
+
+                  lines.append(
+                      f"- **Author:** @{author}"
+                  )
+
+                  lines.append(
+                      f"- **Merged At:** {merged_at}"
+                  )
+
+                  lines.append("")
+
+                  if body:
+
+                      lines.append("**Description**")
+                      lines.append("")
+
+                      for body_line in body.splitlines():
+
+                          body_line = body_line.strip()
+
+                          if body_line:
+                              lines.append(body_line)
+
+                  else:
+
+                      lines.append(
+                          "**Description:** No description provided."
+                      )
+
+                  lines.append("")
+
+                  lines.append("---")
+                  lines.append("")
+
+          # ---------------------------------------------
+          # Write release notes
+          # ---------------------------------------------
+
+          release_notes = "\n".join(lines).strip() + "\n"
+
+          with open(
+              "release-notes.md",
+              "w",
+              encoding="utf-8"
+          ) as file:
+
+              file.write(release_notes)
+
+          print("")
+          print("=========================================")
+          print("Generated GitHub Release Notes")
+          print("=========================================")
+          print("")
+          print(release_notes)
+          PY
+
+      # --------------------------------------------------
+      # Create release tag
+      # --------------------------------------------------
+      - name: Create release tag
+        env:
+          VERSION: ${{ steps.version.outputs.next_version }}
+        run: |
+          echo "Creating tag: $VERSION"
+
+          git fetch origin main
+
+          git checkout main
+
+          git reset --hard origin/main
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag "$VERSION"
+
+          git push origin "$VERSION"
+
+          echo "Tag $VERSION created successfully."
+
+      # --------------------------------------------------
+      # Create GitHub Release
+      # --------------------------------------------------
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.next_version }}
+        run: |
+          gh release create "$VERSION" \
+            --title "Release $VERSION" \
+            --notes-file release-notes.md
+
+          echo "GitHub Release $VERSION created successfully."
