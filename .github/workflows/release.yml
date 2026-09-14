@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   release:
+    # Run only when staging is merged into main
     if: >
       github.event.pull_request.merged == true &&
       github.event.pull_request.head.ref == 'staging'
@@ -20,21 +21,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ---------------------------------------------------------
+      # 1. Checkout repository with complete Git history
+      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Get latest release tag
+      # ---------------------------------------------------------
+      # 2. Get previous release and calculate next version
+      # ---------------------------------------------------------
+      - name: Calculate next release version
         id: version
         run: |
+          echo "Finding latest release tag..."
+
           latest_tag=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
 
           if [ -z "$latest_tag" ]; then
             latest_tag="v0.0.0"
           fi
 
-          echo "Latest release: $latest_tag"
+          echo "Previous release: $latest_tag"
 
           version=${latest_tag#v}
 
@@ -49,7 +58,54 @@ jobs:
           echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
           echo "next_version=$next_version" >> "$GITHUB_OUTPUT"
 
-      - name: Display release information
+      # ---------------------------------------------------------
+      # 3. Display release PR information
+      # ---------------------------------------------------------
+      - name: Display release PR
         run: |
-          echo "Previous release: ${{ steps.version.outputs.latest_tag }}"
-          echo "Next release: ${{ steps.version.outputs.next_version }}"
+          echo "========================================="
+          echo "Release PR"
+          echo "========================================="
+          echo "PR Number : #${{ github.event.pull_request.number }}"
+          echo "PR Title  : ${{ github.event.pull_request.title }}"
+          echo "Source    : ${{ github.event.pull_request.head.ref }}"
+          echo "Target    : ${{ github.event.pull_request.base.ref }}"
+          echo "Merged At : ${{ github.event.pull_request.merged_at }}"
+          echo "========================================="
+
+      # ---------------------------------------------------------
+      # 4. Find merged PRs targeting main
+      # ---------------------------------------------------------
+      - name: Find merged PRs
+        id: prs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Finding merged PRs targeting main..."
+
+          gh pr list \
+            --state merged \
+            --base main \
+            --limit 100 \
+            --json number,title,headRefName,body,mergedAt \
+            > merged-prs.json
+
+          echo "Merged PRs:"
+          cat merged-prs.json
+
+      # ---------------------------------------------------------
+      # 5. Create release tag
+      # ---------------------------------------------------------
+      - name: Create release tag
+        env:
+          VERSION: ${{ steps.version.outputs.next_version }}
+        run: |
+          echo "Creating tag: $VERSION"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag "$VERSION"
+          git push origin "$VERSION"
+
+          echo "Tag $VERSION created successfully."
