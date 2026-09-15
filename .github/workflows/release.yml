@@ -5,11 +5,17 @@ on:
     types:
       - closed
     branches:
+      - development
+      - staging
       - main
 
 permissions:
   contents: write
   pull-requests: read
+
+concurrency:
+  group: release-${{ github.event.pull_request.base.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -26,33 +32,89 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch all tags
+        run: git fetch --tags --force origin
+
       # --------------------------------------------------
-      # Find latest release tag
+      # Calculate channel version (alpha / beta / stable)
       # --------------------------------------------------
-      - name: Find latest release tag
+      - name: Calculate next release version
         id: version
+        env:
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          echo "Finding latest release tag..."
+          set -euo pipefail
 
-          latest_tag=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+          echo "Target branch: $BASE_BRANCH"
+          echo "Source branch: $HEAD_BRANCH"
 
-          if [ -z "$latest_tag" ]; then
-            latest_tag="v0.0.0"
+          latest_alpha=$(
+            git tag --list 'v*-alpha' --sort=-version:refname | head -n 1
+          )
+          latest_beta=$(
+            git tag --list 'v*-beta' --sort=-version:refname | head -n 1
+          )
+          latest_stable=$(
+            git tag --list 'v*' --sort=-version:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | head -n 1 || true
+          )
+
+          echo "Latest alpha: ${latest_alpha:-none}"
+          echo "Latest beta: ${latest_beta:-none}"
+          echo "Latest stable: ${latest_stable:-none}"
+
+          if [ "$BASE_BRANCH" = "development" ]; then
+            channel="alpha"
+            suffix="-alpha"
+            prerelease="true"
+            previous_tag="${latest_alpha:-v0.0.0-alpha}"
+          elif [ "$BASE_BRANCH" = "staging" ]; then
+            channel="beta"
+            suffix="-beta"
+            prerelease="true"
+            previous_tag="${latest_beta:-v0.0.0-beta}"
+          else
+            channel="stable"
+            suffix=""
+            prerelease="false"
+            previous_tag="${latest_stable:-v0.0.0}"
           fi
 
-          echo "Previous release: $latest_tag"
+          # Changelog compare follows the source branch when that
+          # branch has its own channel tag; otherwise use this channel.
+          if [ "$HEAD_BRANCH" = "development" ] && [ -n "$latest_alpha" ]; then
+            compare_from="$latest_alpha"
+          elif [ "$HEAD_BRANCH" = "staging" ] && [ -n "$latest_beta" ]; then
+            compare_from="$latest_beta"
+          elif [ "$HEAD_BRANCH" = "main" ] && [ -n "$latest_stable" ]; then
+            compare_from="$latest_stable"
+          else
+            compare_from="$previous_tag"
+          fi
 
-          version=${latest_tag#v}
+          version="${previous_tag#v}"
+          version="${version%-alpha}"
+          version="${version%-beta}"
 
           IFS='.' read -r major minor patch <<< "$version"
 
           patch=$((patch + 1))
 
-          next_version="v${major}.${minor}.${patch}"
+          next_version="v${major}.${minor}.${patch}${suffix}"
 
+          echo "Channel: $channel"
+          echo "Previous channel tag: $previous_tag"
+          echo "Compare from: $compare_from"
           echo "Next release: $next_version"
 
-          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "target_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$HEAD_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$previous_tag" >> "$GITHUB_OUTPUT"
+          echo "compare_from=$compare_from" >> "$GITHUB_OUTPUT"
           echo "next_version=$next_version" >> "$GITHUB_OUTPUT"
 
       # --------------------------------------------------
@@ -75,16 +137,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIOUS_TAG: ${{ steps.version.outputs.latest_tag }}
+          COMPARE_FROM: ${{ steps.version.outputs.compare_from }}
           RELEASE_COMMIT: ${{ steps.release_commit.outputs.release_commit }}
         run: |
           echo "Finding commits between:"
-          echo "Previous release: $PREVIOUS_TAG"
+          echo "Previous channel tag: $PREVIOUS_TAG"
+          echo "Compare from: $COMPARE_FROM"
           echo "Current release commit: $RELEASE_COMMIT"
 
-          git log \
-            --format="%H" \
-            "$PREVIOUS_TAG..$RELEASE_COMMIT" \
-            > release-commits.txt
+          : > release-commits.txt
+
+          if git rev-parse "$PREVIOUS_TAG" >/dev/null 2>&1; then
+            git log --format="%H" "$PREVIOUS_TAG..$RELEASE_COMMIT" \
+              > release-commits.txt
+          elif git rev-parse "$COMPARE_FROM" >/dev/null 2>&1; then
+            git log --format="%H" "$COMPARE_FROM..$RELEASE_COMMIT" \
+              > release-commits.txt
+          else
+            echo "No previous tag found for this channel. Skipping commit range."
+          fi
 
           echo ""
           echo "Commits included in release:"
@@ -130,9 +201,17 @@ jobs:
 
           echo "[]" > release-contributors.json
 
-          if git rev-parse "$PREVIOUS_TAG" >/dev/null 2>&1; then
+          compare_ref=""
+
+          if git rev-parse "$COMPARE_FROM" >/dev/null 2>&1; then
+            compare_ref="$COMPARE_FROM"
+          elif git rev-parse "$PREVIOUS_TAG" >/dev/null 2>&1; then
+            compare_ref="$PREVIOUS_TAG"
+          fi
+
+          if [ -n "$compare_ref" ]; then
             gh api \
-              "repos/${{ github.repository }}/compare/${PREVIOUS_TAG}...${RELEASE_COMMIT}" \
+              "repos/${{ github.repository }}/compare/${compare_ref}...${RELEASE_COMMIT}" \
               --jq '
                 [
                   .commits[]
@@ -166,7 +245,11 @@ jobs:
           RELEASE_PR_NUMBER: ${{ github.event.pull_request.number }}
           RELEASE_PR_TITLE: ${{ github.event.pull_request.title }}
           PREVIOUS_VERSION: ${{ steps.version.outputs.latest_tag }}
+          COMPARE_FROM: ${{ steps.version.outputs.compare_from }}
           VERSION: ${{ steps.version.outputs.next_version }}
+          CHANNEL: ${{ steps.version.outputs.channel }}
+          SOURCE_BRANCH: ${{ steps.version.outputs.source_branch }}
+          TARGET_BRANCH: ${{ steps.version.outputs.target_branch }}
           REPOSITORY: ${{ github.repository }}
         run: |
           export RELEASE_DATE=$(date -u +"%Y-%m-%d")
@@ -179,7 +262,11 @@ jobs:
           release_pr_title = os.environ["RELEASE_PR_TITLE"]
           release_date = os.environ["RELEASE_DATE"]
           previous_version = os.environ["PREVIOUS_VERSION"]
+          compare_from = os.environ["COMPARE_FROM"]
           version = os.environ["VERSION"]
+          channel = os.environ["CHANNEL"]
+          source_branch = os.environ["SOURCE_BRANCH"]
+          target_branch = os.environ["TARGET_BRANCH"]
           repository = os.environ["REPOSITORY"]
 
           with open("release-prs.json", "r", encoding="utf-8") as file:
@@ -229,21 +316,16 @@ jobs:
 
           lines = []
 
-          # ---------------------------------------------
-          # Release information
-          # ---------------------------------------------
-
           lines.append("## Release Information")
           lines.append("")
           lines.append(
               f"- **Release PR:** #{release_pr_number} — {release_pr_title}"
           )
           lines.append(f"- **Release Date:** {release_date}")
+          lines.append(f"- **Channel:** `{channel}`")
+          lines.append(f"- **Source Branch:** `{source_branch}`")
+          lines.append(f"- **Target Branch:** `{target_branch}`")
           lines.append("")
-
-          # ---------------------------------------------
-          # Pull requests
-          # ---------------------------------------------
 
           lines.append("## Pull Requests")
           lines.append("")
@@ -261,28 +343,26 @@ jobs:
 
                   if author:
                       lines.append(
-                          f"- #{number} - {title} - [@{author}](https://github.com/{author})"
+                          f"- #{number} — {title} — [@{author}](https://github.com/{author})"
                       )
                   else:
                       lines.append(f"- #{number} — {title}")
 
               lines.append("")
 
-          # ---------------------------------------------
-          # Full changelog
-          # ---------------------------------------------
-
           lines.append("## Full Changelog")
           lines.append("")
           lines.append(
-              f"**Full Changelog:** [{previous_version}...{version}]"
-              f"(https://github.com/{repository}/compare/{previous_version}...{version})"
+              f"**Full Changelog:** [{compare_from}...{version}]"
+              f"(https://github.com/{repository}/compare/{compare_from}...{version})"
           )
           lines.append("")
-
-          # ---------------------------------------------
-          # Contributors
-          # ---------------------------------------------
+          lines.append(
+              f"Comparison is based on the source branch `{source_branch}` "
+              f"(from `{compare_from}` to `{version}`). "
+              f"Previous `{channel}` tag was `{previous_version}`."
+          )
+          lines.append("")
 
           lines.append("## Contributors")
           lines.append("")
@@ -327,19 +407,20 @@ jobs:
           PY
 
       # --------------------------------------------------
-      # Create release tag
+      # Create release tag on the target branch only
       # --------------------------------------------------
       - name: Create release tag
         env:
           VERSION: ${{ steps.version.outputs.next_version }}
+          TARGET_BRANCH: ${{ steps.version.outputs.target_branch }}
         run: |
-          echo "Creating tag: $VERSION"
+          echo "Creating tag: $VERSION on $TARGET_BRANCH"
 
-          git fetch origin main
+          git fetch origin "$TARGET_BRANCH"
 
-          git checkout main
+          git checkout "$TARGET_BRANCH"
 
-          git reset --hard origin/main
+          git reset --hard "origin/$TARGET_BRANCH"
 
           git config user.name "github-actions[bot]"
           git config user.email \
@@ -349,7 +430,7 @@ jobs:
 
           git push origin "$VERSION"
 
-          echo "Tag $VERSION created successfully."
+          echo "Tag $VERSION created on $TARGET_BRANCH."
 
       # --------------------------------------------------
       # Create GitHub Release
@@ -358,9 +439,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.next_version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
+          extra_args=()
+
+          if [ "$PRERELEASE" = "true" ]; then
+            extra_args+=(--prerelease)
+          fi
+
           gh release create "$VERSION" \
             --title "Release $VERSION" \
-            --notes-file release-notes.md
+            --notes-file release-notes.md \
+            "${extra_args[@]}"
 
           echo "GitHub Release $VERSION created successfully."

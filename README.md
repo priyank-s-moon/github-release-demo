@@ -1,75 +1,97 @@
 # GitHub Release Demo
 
-This repository automates GitHub Releases when a pull request is **merged into** `main`.
+This repository automates GitHub Releases with **one version line per environment**:
+
+| Branch | Tag line | Example |
+| --- | --- | --- |
+| `development` | alpha | `v1.0.0-alpha` |
+| `staging` | beta | `v1.0.0-beta` |
+| `main` | stable | `v1.0.0` |
+
+Any merged PR into one of those branches bumps **only that branch’s tags**. Alpha, beta, and stable are independent.
 
 ---
 
 ## What has been done
 
-A GitHub Actions workflow at `[.github/workflows/release.yml](.github/workflows/release.yml)` runs after **any merged pull request into** `main`. It:
+A GitHub Actions workflow at [`.github/workflows/release.yml`](.github/workflows/release.yml) runs after **any merged pull request** into `development`, `staging`, or `main`:
 
-1. Finds the latest `v*` tag (or starts from `v0.0.0`).
-2. Bumps the patch version (`v1.0.3` → `v1.0.4`).
-3. Lists commits between that tag and the merge commit.
-4. Maps those commits to pull requests, including the PR that was just merged.
-5. Writes release notes with:
-  - release PR number, title, and date
-  - each included PR: number, title, and developer
-  - a Full Changelog compare link (`previous tag` → `new tag`)
-  - contributor profiles (avatars and GitHub links)
-6. Tags `main` and publishes a GitHub Release.
+| Target | New tag | Leaves unchanged |
+| --- | --- | --- |
+| `development` | next `vX.Y.Z-alpha` | beta and stable |
+| `staging` | next `vX.Y.Z-beta` | alpha and stable |
+| `main` | next `vX.Y.Z` | alpha and beta |
+
+That includes hotfixes, sprint branches, and promotions (`development` → `staging`, `staging` → `main`).
+
+For each merge it:
+
+1. Finds the latest tag **for that channel only**.
+2. Bumps the patch number and keeps the channel suffix (`-alpha`, `-beta`, or none).
+3. Lists commits / PRs since that channel’s previous tag.
+4. Writes release notes (PR number, title, developer; changelog compare; contributor profiles).
+5. Tags the **target branch** and publishes a GitHub Release (alpha/beta as prereleases).
 
 ---
-
-
 
 ## What problem it solves
 
-When work lands on `main`, it is easy to lose track of what went out, forget to tag, or paste a noisy commit log as the changelog.
+Each environment can move forward without rewriting another environment’s last release.
 
-This workflow:
-
-- Records **what shipped** as PR numbers, titles, and developers
-- Creates the **git tag and GitHub Release** on every merge into `main`
-- Adds a **compare link** so the full diff is one click away
-- Lists **contributors** for the release
-- Keeps notes on the **GitHub Releases** page instead of a hand-written changelog
+- A merge into `development` ships the next alpha without touching beta or production.
+- A merge into `staging` (from `development`, a hotfix, or anything else) ships the next beta only.
+- A merge into `main` (from `staging`, `hotfix/*`, or anything else) ships the next stable only.
+- The changelog compare follows the **source branch** when that branch has its own tags.
 
 ---
-
-
 
 ## How it works
 
 ```text
-any branch (staging, hotfix/*, sprint-*, …)
-        │
-        │  open PR → main  and merge it
-        ▼
-       main
-        │
-        ▼
-  Release workflow
-        │
-        ├── next v* tag (patch + 1)
-        ├── PRs since last tag
-        ├── generated notes
-        └── GitHub Release
+any PR ──► development     tag: vX.Y.(Z+1)-alpha
+any PR ──► staging         tag: vX.Y.(Z+1)-beta
+any PR ──► main            tag: vX.Y.(Z+1)
 ```
 
-1. Open a pull request targeting `main` from any branch.
-2. Merge the pull request.
-3. The workflow runs if the PR targeted `main` and was actually merged.
-4. A new tag and GitHub Release appear on the repository.
+1. Merge a PR into `development` → next **alpha** GitHub Release (prerelease).
+2. Merge a PR into `staging` → next **beta** GitHub Release (prerelease).
+3. Merge a PR into `main` → next **stable** GitHub Release.
+
+Git tags cannot contain spaces, so tags are `v1.0.1-alpha` and `v1.0.1-beta` (not `v1.0.1 - alpha`).
+
+### Full Changelog compare
+
+The compare link is based on the **source branch** when that branch has a channel tag:
+
+| Source → target | Compare |
+| --- | --- |
+| anything → `development` | previous alpha → new alpha |
+| `development` → `staging` | latest alpha → new beta |
+| `hotfix/*` (or other) → `staging` | previous beta → new beta |
+| `staging` → `main` | latest beta → new stable |
+| `hotfix/*` (or other) → `main` | previous stable → new stable |
+
+If the source branch has no channel tag, the compare uses the previous tag of the **target** channel.
+
+---
+
+## Branch convention
+
+| Branch | Role |
+| --- | --- |
+| `development` | Integration / alpha releases |
+| `staging` | Pre-production / beta releases |
+| `main` | Production / stable releases |
+| `hotfix/*` | Urgent fixes; merging into `staging` or `main` still creates that branch’s next release |
+
+---
 
 ## Limitations
 
-- **Release trigger is a merged PR into** `main`**.** Direct pushes to `main` do not create a release. Closed-but-unmerged PRs do nothing.
-- **Every merge into** `main` **publishes a new release.** Merge one PR at a time and wait for the workflow to finish so tags do not race.
-- **Versioning is patch-only.** `v1.0.3` becomes `v1.0.4`. There is no major / minor bump from branch names or PR titles.
-- `package.json` **is not updated.** Only the git tag and GitHub Release change.
-- **Only** `v`* **tags are used.** A tag like `1.0.3` is ignored. The repo needs at least one real `v`* tag; a missing tag is treated as `v0.0.0`, which will fail `git log` if that tag does not exist.
-- **Notes list PR number, title, and author.** Commits with no linked PR (direct commits, some cherry-picks) are omitted from the PR list. The Full Changelog compare link needs a real previous `v`* tag.
-- **PR discovery uses** `previous_tag..merge_commit`**.** Rewritten history, force-pushes, or a shallow clone (`fetch-depth` other than `0`) can miss PRs.
-- **Releases are published immediately.** There is no draft, approval, test, build, or deploy step.
-
+- **Only merged PRs into `development`, `staging`, or `main` create a release.** Direct pushes do not. Closed-but-unmerged PRs do nothing.
+- **Channels bump independently.** Alpha can be far ahead of beta/stable; promoting does not copy the alpha number onto beta.
+- **Versioning is patch-only** within each channel.
+- **`package.json` is not updated.**
+- **Alpha/beta tags must end in `-alpha` / `-beta`.** Stable tags must be exactly `vX.Y.Z`. A missing channel tag is treated as `v0.0.0` plus that suffix; `git log` needs a real previous tag when one exists.
+- **Notes list PR number, title, and author.** Commits with no linked PR may be omitted.
+- **Releases are published immediately.** Alpha and beta are marked as GitHub prereleases. Merge one PR per target branch at a time so tags do not race.
