@@ -1,5 +1,5 @@
 function getMessage() {
-    return "Hello GitHub Release Demo";
+    return "Hello Users: This is a a github release demo";
   }
   
   console.log(getMessage());
