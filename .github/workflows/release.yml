@@ -109,7 +109,10 @@ jobs:
                   .[]
                   | {
                       number: .number,
-                      title: .title
+                      title: .title,
+                      author: .user.login,
+                      authorUrl: .user.html_url,
+                      avatarUrl: .user.avatar_url
                     }
                 ]
               ')
@@ -137,12 +140,35 @@ jobs:
 
           mv release-prs-filtered.json release-prs.json
 
+          echo "[]" > release-contributors.json
+
+          if git rev-parse "$PREVIOUS_TAG" >/dev/null 2>&1; then
+            gh api \
+              "repos/${{ github.repository }}/compare/${PREVIOUS_TAG}...${RELEASE_COMMIT}" \
+              --jq '
+                [
+                  .commits[]
+                  | .author.login // .committer.login
+                  | select(. != null)
+                ]
+                | unique
+              ' \
+              > release-contributors.json
+          fi
+
           echo ""
           echo "========================================="
           echo "PRs included in this release"
           echo "========================================="
 
           cat release-prs.json
+
+          echo ""
+          echo "========================================="
+          echo "Contributors included in this release"
+          echo "========================================="
+
+          cat release-contributors.json
 
       # --------------------------------------------------
       # Generate GitHub Release notes
@@ -151,6 +177,9 @@ jobs:
         env:
           RELEASE_PR_NUMBER: ${{ github.event.pull_request.number }}
           RELEASE_PR_TITLE: ${{ github.event.pull_request.title }}
+          PREVIOUS_VERSION: ${{ steps.version.outputs.latest_tag }}
+          VERSION: ${{ steps.version.outputs.next_version }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           export RELEASE_DATE=$(date -u +"%Y-%m-%d")
 
@@ -161,11 +190,54 @@ jobs:
           release_pr_number = os.environ["RELEASE_PR_NUMBER"]
           release_pr_title = os.environ["RELEASE_PR_TITLE"]
           release_date = os.environ["RELEASE_DATE"]
+          previous_version = os.environ["PREVIOUS_VERSION"]
+          version = os.environ["VERSION"]
+          repository = os.environ["REPOSITORY"]
 
           with open("release-prs.json", "r", encoding="utf-8") as file:
               prs = json.load(file)
 
+          try:
+              with open("release-contributors.json", "r", encoding="utf-8") as file:
+                  commit_authors = json.load(file)
+          except FileNotFoundError:
+              commit_authors = []
+
+          if not isinstance(commit_authors, list):
+              commit_authors = []
+
           prs = sorted(prs, key=lambda pr: pr.get("number") or 0)
+
+          contributors = {}
+
+          def add_contributor(login, url=None, avatar=None):
+              if not login:
+                  return
+
+              if login.endswith("[bot]") or login == "github-actions[bot]":
+                  return
+
+              existing = contributors.get(login, {})
+              contributors[login] = {
+                  "login": login,
+                  "url": url or existing.get("url") or f"https://github.com/{login}",
+                  "avatar": avatar or existing.get("avatar") or f"https://github.com/{login}.png?size=64",
+              }
+
+          for pr in prs:
+              add_contributor(
+                  pr.get("author"),
+                  pr.get("authorUrl"),
+                  pr.get("avatarUrl"),
+              )
+
+          for login in commit_authors:
+              add_contributor(login)
+
+          contributor_list = sorted(
+              contributors.values(),
+              key=lambda item: item["login"].lower(),
+          )
 
           lines = []
 
@@ -176,7 +248,7 @@ jobs:
           lines.append("## Release Information")
           lines.append("")
           lines.append(
-              f"- **Release PR:** #{release_pr_number} - {release_pr_title}"
+              f"- **Release PR:** #{release_pr_number} — {release_pr_title}"
           )
           lines.append(f"- **Release Date:** {release_date}")
           lines.append("")
@@ -197,8 +269,60 @@ jobs:
               for pr in prs:
                   number = pr.get("number")
                   title = pr.get("title") or "Untitled PR"
-                  lines.append(f"- #{number} - {title}")
+                  author = pr.get("author")
 
+                  if author:
+                      lines.append(
+                          f"- #{number} — {title} — [@{author}](https://github.com/{author})"
+                      )
+                  else:
+                      lines.append(f"- #{number} — {title}")
+
+              lines.append("")
+
+          # ---------------------------------------------
+          # Full changelog
+          # ---------------------------------------------
+
+          lines.append("## Full Changelog")
+          lines.append("")
+          lines.append(
+              f"**Full Changelog:** [{previous_version}...{version}]"
+              f"(https://github.com/{repository}/compare/{previous_version}...{version})"
+          )
+          lines.append("")
+
+          # ---------------------------------------------
+          # Contributors
+          # ---------------------------------------------
+
+          lines.append("## Contributors")
+          lines.append("")
+
+          if not contributor_list:
+              lines.append("No contributors were identified for this release.")
+              lines.append("")
+          else:
+              avatar_parts = []
+
+              for contributor in contributor_list:
+                  login = contributor["login"]
+                  url = contributor["url"]
+                  avatar = contributor["avatar"]
+                  avatar_parts.append(
+                      f'<a href="{url}">'
+                      f'<img src="{avatar}" width="48" height="48" alt="@{login}"/>'
+                      f"</a>"
+                  )
+
+              lines.append(" ".join(avatar_parts))
+              lines.append("")
+              lines.append(
+                  " ".join(
+                      f"[@{item['login']}]({item['url']})"
+                      for item in contributor_list
+                  )
+              )
               lines.append("")
 
           release_notes = "\n".join(lines).strip() + "\n"
