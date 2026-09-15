@@ -71,9 +71,6 @@ Example notes:
 
 - **Release PR:** #12 — Fix login timeout
 - **Release Date:** 2026-09-15
-- **Channel:** `stable`
-- **Source Branch:** `hotfix/login`
-- **Target Branch:** `main`
 
 ## Pull Requests
 

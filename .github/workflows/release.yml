@@ -337,9 +337,6 @@ jobs:
               f"- **Release PR:** #{release_pr_number} — {release_pr_title}"
           )
           lines.append(f"- **Release Date:** {release_date}")
-          lines.append(f"- **Channel:** `{channel}`")
-          lines.append(f"- **Source Branch:** `{source_branch}`")
-          lines.append(f"- **Target Branch:** `{target_branch}`")
           lines.append("")
 
           lines.append("## Pull Requests")
