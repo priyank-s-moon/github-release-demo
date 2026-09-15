@@ -1,7 +1,7 @@
 {
   "name": "github-release-demo",
   "version": "1.0.0",
-  "description": "",
+  "description": "This is a github release demo",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
