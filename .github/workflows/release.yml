@@ -13,9 +13,7 @@ permissions:
 
 jobs:
   release:
-    if: >
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.head.ref == 'staging'
+    if: github.event.pull_request.merged == true
 
     runs-on: ubuntu-latest
 
@@ -78,7 +76,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREVIOUS_TAG: ${{ steps.version.outputs.latest_tag }}
           RELEASE_COMMIT: ${{ steps.release_commit.outputs.release_commit }}
-          RELEASE_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           echo "Finding commits between:"
           echo "Previous release: $PREVIOUS_TAG"
@@ -130,15 +127,6 @@ jobs:
             fi
 
           done < release-commits.txt
-
-          # Remove the staging -> main release PR itself
-          jq \
-            --arg release_pr "$RELEASE_PR_NUMBER" \
-            'map(select((.number | tostring) != $release_pr))' \
-            release-prs.json \
-            > release-prs-filtered.json
-
-          mv release-prs-filtered.json release-prs.json
 
           echo "[]" > release-contributors.json
 
