@@ -29,9 +29,9 @@ jobs:
           fetch-depth: 0
 
       # --------------------------------------------------
-      # Calculate next release version
+      # Find latest release tag
       # --------------------------------------------------
-      - name: Calculate next release version
+      - name: Find latest release tag
         id: version
         run: |
           echo "Finding latest release tag..."
@@ -109,11 +109,7 @@ jobs:
                   .[]
                   | {
                       number: .number,
-                      title: .title,
-                      body: .body,
-                      branch: .head.ref,
-                      author: .user.login,
-                      mergedAt: .merged_at
+                      title: .title
                     }
                 ]
               ')
@@ -149,15 +145,12 @@ jobs:
           cat release-prs.json
 
       # --------------------------------------------------
-      # Generate GitHub Release changelog
+      # Generate GitHub Release notes
       # --------------------------------------------------
       - name: Generate release notes
         env:
-          VERSION: ${{ steps.version.outputs.next_version }}
-          PREVIOUS_VERSION: ${{ steps.version.outputs.latest_tag }}
           RELEASE_PR_NUMBER: ${{ github.event.pull_request.number }}
           RELEASE_PR_TITLE: ${{ github.event.pull_request.title }}
-          RELEASE_MERGED_AT: ${{ github.event.pull_request.merged_at }}
         run: |
           export RELEASE_DATE=$(date -u +"%Y-%m-%d")
 
@@ -165,20 +158,14 @@ jobs:
           import json
           import os
 
-          version = os.environ["VERSION"]
-          previous_version = os.environ["PREVIOUS_VERSION"]
           release_pr_number = os.environ["RELEASE_PR_NUMBER"]
           release_pr_title = os.environ["RELEASE_PR_TITLE"]
-          release_merged_at = os.environ["RELEASE_MERGED_AT"]
           release_date = os.environ["RELEASE_DATE"]
 
           with open("release-prs.json", "r", encoding="utf-8") as file:
               prs = json.load(file)
 
-          prs = sorted(
-              prs,
-              key=lambda pr: pr.get("mergedAt") or ""
-          )
+          prs = sorted(prs, key=lambda pr: pr.get("number") or 0)
 
           lines = []
 
@@ -188,39 +175,10 @@ jobs:
 
           lines.append("## Release Information")
           lines.append("")
-
           lines.append(
-              f"- **Previous Release:** `{previous_version}`"
+              f"- **Release PR:** #{release_pr_number} - {release_pr_title}"
           )
-
-          lines.append(
-              f"- **Current Release:** `{version}`"
-          )
-
-          lines.append(
-              f"- **Release PR:** #{release_pr_number}"
-          )
-
-          lines.append(
-              f"- **Release PR Title:** {release_pr_title}"
-          )
-
-          lines.append(
-              f"- **Release Date:** {release_date}"
-          )
-
-          lines.append(
-              f"- **Merged At:** {release_merged_at}"
-          )
-
-          lines.append(
-              "- **Source Branch:** `staging`"
-          )
-
-          lines.append(
-              "- **Target Branch:** `main`"
-          )
-
+          lines.append(f"- **Release Date:** {release_date}")
           lines.append("")
 
           # ---------------------------------------------
@@ -231,80 +189,21 @@ jobs:
           lines.append("")
 
           if not prs:
-
               lines.append(
-                  "No feature or bug-fix pull requests were "
-                  "included in this release."
+                  "No pull requests were included in this release."
               )
+              lines.append("")
+          else:
+              for pr in prs:
+                  number = pr.get("number")
+                  title = pr.get("title") or "Untitled PR"
+                  lines.append(f"- #{number} - {title}")
 
               lines.append("")
 
-          else:
-
-              for pr in prs:
-
-                  number = pr.get("number")
-                  title = pr.get("title") or "Untitled PR"
-                  branch = pr.get("branch") or "unknown"
-                  author = pr.get("author") or "unknown"
-                  merged_at = pr.get("mergedAt") or "unknown"
-                  body = (pr.get("body") or "").strip()
-
-                  lines.append(
-                      f"### #{number} — {title}"
-                  )
-
-                  lines.append("")
-
-                  lines.append(
-                      f"- **Branch:** `{branch}`"
-                  )
-
-                  lines.append(
-                      f"- **Author:** @{author}"
-                  )
-
-                  lines.append(
-                      f"- **Merged At:** {merged_at}"
-                  )
-
-                  lines.append("")
-
-                  if body:
-
-                      lines.append("**Description**")
-                      lines.append("")
-
-                      for body_line in body.splitlines():
-
-                          body_line = body_line.strip()
-
-                          if body_line:
-                              lines.append(body_line)
-
-                  else:
-
-                      lines.append(
-                          "**Description:** No description provided."
-                      )
-
-                  lines.append("")
-
-                  lines.append("---")
-                  lines.append("")
-
-          # ---------------------------------------------
-          # Write release notes
-          # ---------------------------------------------
-
           release_notes = "\n".join(lines).strip() + "\n"
 
-          with open(
-              "release-notes.md",
-              "w",
-              encoding="utf-8"
-          ) as file:
-
+          with open("release-notes.md", "w", encoding="utf-8") as file:
               file.write(release_notes)
 
           print("")

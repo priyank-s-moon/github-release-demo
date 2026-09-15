@@ -1,213 +1,67 @@
 # GitHub Release Demo
 
-This repository is a working demo of **automated GitHub Releases** driven by a `staging` → `main` merge.
-
-Feature work can stay small and ordinary. When a release is ready, merging `staging` into `main` is enough: a workflow calculates the next version, collects the pull requests that landed since the last tag, writes release notes, creates a `vX.Y.Z` tag, and publishes a GitHub Release.
-
-The Node app in `src/` is only a placeholder so there is something to merge. The useful part of the repo is `[.github/workflows/release.yml](.github/workflows/release.yml)`.
+This repository automates GitHub Releases when `staging` is merged into `main`.
 
 ---
-
-## Purpose
-
-Teams often lose track of *what actually shipped* when several feature PRs sit on a staging branch and then go out together.
-
-This repo shows a lightweight pattern that:
-
-- Treats `staging` **as the integration branch** and `main` **as the released branch**
-- Treats a **merged** `staging` **→** `main` **pull request as the release trigger**
-- Builds **human-readable release notes from the feature PRs**, not from raw commit messages
-- Publishes a **GitHub Release + git tag** without a changelog file in the repo
-
-It is meant as a reference you can copy into a real service, not as a product itself.
-
----
-
-
 
 ## What has been done
 
-The release workflow in `.github/workflows/release.yml` is already wired and has been used to publish tags such as `v1.0.0` through `v1.0.3`.
+A GitHub Actions workflow at `[.github/workflows/release.yml](.github/workflows/release.yml)` runs after a **merged** pull request from `staging` into `main`. It:
 
-On a merged `staging` → `main` PR it:
-
-1. **Finds the latest** `v`* **tag** on the repo (or starts from `v0.0.0` if none exist).
-2. **Bumps the patch version** (`v1.0.3` → `v1.0.4`).
-3. **Lists commits** between the previous tag and the merge commit of the release PR.
-4. **Resolves those commits to pull requests** via the GitHub API (`commits/{sha}/pulls`).
-5. **Drops the release PR itself** (`staging` → `main`) so notes only describe feature / fix PRs.
-6. **Writes** `release-notes.md` with:
-  - previous / current version
-  - release PR number, title, date, and merge time
-  - each included PR: title, branch, author, merge time, and description
-7. **Tags** `origin/main` as `vX.Y.Z` and **creates a published GitHub Release**.
+1. Finds the latest `v*` tag (or starts from `v0.0.0`).
+2. Bumps the patch version (`v1.0.3` → `v1.0.4`).
+3. Lists commits between that tag and the merge commit.
+4. Maps those commits to pull requests, excluding the `staging` → `main` PR itself.
+5. Writes short release notes.
+6. Tags `main` and publishes a GitHub Release.
 
 ---
 
+## What problem it solves
 
+When several PRs land on `staging` and ship together, it is easy to lose track of what went out, forget to tag, or paste a noisy commit log as the changelog.
 
-## How the flow works
+This workflow:
+
+- Records **what shipped** as a list of PR numbers and titles
+- Creates the **git tag and GitHub Release** on the merge that actually ships
+- Keeps notes on the **GitHub Releases** page instead of a hand-written changelog
+
+---
+
+## How it works
 
 ```text
-feature / fix branch
+work merged into staging
         │
-        │  open PR, review, merge
-        ▼
-     staging          ← integration / pre-production
-        │
-        │  when a release is ready:
         │  open PR  staging → main  and merge it
         ▼
-       main           ← released code
+       main
         │
         ▼
   Release workflow
         │
-        ├── next patch tag (vX.Y.Z)
+        ├── next v* tag (patch + 1)
         ├── PRs since last tag
         ├── generated notes
-        └── GitHub Release + git tag
+        └── GitHub Release
 ```
 
-
-
-### Day-to-day development
-
-1. Create a branch from `staging` (or from `main` if `staging` is already aligned).
-2. Open a pull request **into** `staging`, not `main`.
-3. Write a useful PR title and description. Those become the release notes.
-4. Merge the feature PR into `staging` when it is ready.
-
-
-
-### Cutting a release
-
-1. Open a pull request **from** `staging` **into** `main`.
-2. Merge it (a merge commit or squash both work as the trigger; the workflow uses `merge_commit_sha`).
-3. GitHub Actions runs **only if**:
-  - the PR targeted `main`
-  - it was actually merged (`merged == true`)
-  - the source branch was exactly `staging`
+1. Merge work into `staging`.
+2. Open a pull request from `staging` to `main` and merge it.
+3. The workflow runs only if the PR targeted `main`, was actually merged, and came from `staging`.
 4. A new tag and GitHub Release appear on the repository.
 
-Closing a PR without merging does nothing. Merging any other branch into `main` does not create a release.
-
-### What a generated release looks like
-
-```markdown
-## Release Information
-
-- **Previous Release:** `v1.0.3`
-- **Current Release:** `v1.0.4`
-- **Release PR:** #12
-- **Release PR Title:** Release staging to main
-- **Release Date:** 2026-09-14
-- **Merged At:** 2026-09-14T13:20:00Z
-- **Source Branch:** `staging`
-- **Target Branch:** `main`
-
-## Pull Requests
-
-### #10 — feat: add user settings
-
-- **Branch:** `feature/user-settings`
-- **Author:** @someone
-- **Merged At:** 2026-09-10T09:00:00Z
-
-**Description**
-Adds a settings screen for the user profile.
-```
-
 ---
 
+## Limitations
 
-
-## How this helps
-
-
-| Problem                           | What the workflow does                                                         |
-| --------------------------------- | ------------------------------------------------------------------------------ |
-| “What shipped in this release?”   | Notes list every feature/fix PR between tags, with author and description.     |
-| Manual tagging is easy to forget  | Tag + GitHub Release are created on the merge that actually ships.             |
-| Commit logs are noisy             | Notes are built from PRs, so squash/merge commits do not become the changelog. |
-| Staging and production drift      | Only `staging` → `main` is a release. `main` stays the last shipped snapshot.  |
-| Release notes live in random docs | GitHub Releases is the shared place for version history.                       |
-
-
-For a team, this means: develop on feature branches, integrate on `staging`, and treat the `staging` → `main` PR as the release ceremony. No extra CLI, no manual `git tag`, no hand-written changelog unless you want one.
-
----
-
-
-
-## Limitations to keep in mind while developing
-
-These are the constraints of the current workflow. Ignoring them will produce a missed release, a wrong version, or empty notes.
-
-### Branching and trigger
-
-- **Only** `staging` **→** `main` **creates a release.** A hotfix PR from `fix/urgent` into `main` will merge code and will **not** tag or publish anything.
-- **The source branch name must be exactly** `staging`**.** Renaming it (for example to `develop`) requires a workflow change.
-- **Direct pushes to** `main` **do not release.** The job listens to `pull_request` `closed`, not `push`.
-- **An unmerged / closed PR does not release.** The job checks `github.event.pull_request.merged == true`.
-
-
-
-### Versioning
-
-- **Only the patch number increases.** `v1.0.3` always becomes `v1.0.4`. There is no minor/major bump from conventional commits, labels, or PR titles.
-- `package.json` **version is not updated.** Git tags and GitHub Releases are independent of the npm version field.
-- **Tags must match** `v`***.** Only tags like `v1.0.3` are considered. A tag named `1.0.3` or `release-1.0.3` is ignored.
-- **First-ever run is fragile.** If there is no `v`* tag, the script pretends the previous version is `v0.0.0`, but `git log v0.0.0..` will fail unless that tag actually exists. Seed the repo with an initial tag (for example `v0.0.0` or `v1.0.0`) before relying on automation.
-
-
-
-### What gets included in the notes
-
-- **Feature work must merge through** `staging`**.** PRs merged only to `main` are outside this release model.
-- **Commits without a linked PR are skipped.** Direct commits on `staging`, or cherry-picks whose SHAs GitHub does not associate with a PR, will not appear in the notes even if the code shipped.
-- **The release PR is always excluded.** Do not put the real changelog in the `staging` → `main` PR body if you expect it to show up as a feature entry. It will be filtered out.
-- **Notes come from the GitHub PR, not the commit message.** Empty PR descriptions become “No description provided.” Treat PR title + body as customer-facing text.
-- **A release is still created if no feature PRs are found.** You can get a valid tag whose notes say no feature or bug-fix PRs were included.
-- **PR bodies are copied almost as-is.** Internal checklists, secrets, or `@` mentions in a PR description will show up on the public GitHub Release.
-
-
-
-### History and merge style
-
-- **The range is** `previous_tag..merge_commit`**.** Rewriting `staging` history, force-pushing, or tagging the wrong commit will change which PRs are discovered.
-- **Cherry-picks and rebase-only commits may lose PR linkage.** GitHub’s “PRs for this commit” API keys off the commit SHA it knows. A rewritten SHA may not map back.
-- **Keep a full clone in CI.** The workflow already uses `fetch-depth: 0`. Do not switch it to a shallow clone or version calculation and `git log` will be wrong.
-
-
-
-### Permissions and publishing
-
-- **The workflow needs** `contents: write`**.** The default `GITHUB_TOKEN` is enough for tags and releases on the same repo. It does not push to other repositories.
-- **Releases are published immediately.** There is no draft, pre-release, or approval step after the `staging` → `main` merge.
-- **Two release PRs merged in quick succession can race** on “latest tag” if they overlap. Merge one release at a time and wait for the workflow to finish.
-
-
-
-### What this workflow does not do
-
-- It does not run tests, builds, or publish npm / Docker artifacts.
-- It does not write a `CHANGELOG.md` or any file back into the repo.
-- It does not deploy. Pair it with a separate deploy workflow on `release` or on tags if you need that.
-
----
-
-
-
-## Suggested working rules
-
-1. **Target** `staging` **for all feature and fix PRs.**
-2. **Write the PR description as if it will be published.**
-3. **Do not merge feature branches into** `main`**.**
-4. **Cut a release only via** `staging` **→** `main`**.**
-5. **Wait for the Release workflow to finish** before merging another release PR.
-6. **Use a real** `v`* **tag as the baseline** (already true in this demo: `v1.0.3`).
-7. **If you need a major/minor bump or a hotfix-to-**`main` **release, change the workflow first** — the current file cannot do either.
-
----
+- **Release trigger is `staging` → `main` only.** Merging `hotfix/`* (or any other branch) into `main`, or promoting `beta` / `sprint-*`, does not tag or publish a release.
+- **Closed-but-unmerged PRs and direct pushes to `main` do nothing.**
+- **Versioning is patch-only.** `v1.0.3` becomes `v1.0.4`. There is no major / minor bump from branch names or PR titles.
+- `**package.json` is not updated.** Only the git tag and GitHub Release change.
+- **Only `v`* tags are used.** A tag like `1.0.3` is ignored. The repo needs at least one real `v`* tag; a missing tag is treated as `v0.0.0`, which will fail `git log` if that tag does not exist.
+- **Notes list PR number and title only.** Commits with no linked PR (direct commits, some cherry-picks) are omitted. The `staging` → `main` PR itself is excluded.
+- **PR discovery uses `previous_tag..merge_commit`.** Rewritten history, force-pushes, or a shallow clone (`fetch-depth` other than `0`) can miss PRs.
+- **Releases are published immediately.** There is no draft, approval, test, build, or deploy step. Merge one `staging` → `main` PR at a time and wait for the workflow to finish.
 
