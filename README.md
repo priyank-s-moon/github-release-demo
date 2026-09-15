@@ -1,24 +1,24 @@
 # GitHub Release Demo
 
-This repository automates GitHub Releases when a pull request is **merged into `main`**.
+This repository automates GitHub Releases when a pull request is **merged into** `main`.
 
-Alpha (`development`) and beta (`staging`) releases are implemented in [`.github/workflows/release.yml`](.github/workflows/release.yml) but **commented out** until they are confirmed. They are not active.
+Alpha (`development`) and beta (`staging`) releases are implemented in `[.github/workflows/release.yml](.github/workflows/release.yml)` but **commented out** until they are confirmed. They are not active.
 
 ---
 
 ## What has been done
 
-A GitHub Actions workflow runs after **any merged pull request into `main`**. It:
+A GitHub Actions workflow runs after **any merged pull request into** `main`. It:
 
 1. Finds the latest stable `vX.Y.Z` tag (or starts from `v0.0.0`).
 2. Bumps the patch version (`v1.0.3` → `v1.0.4`).
 3. Lists commits between that tag and the merge commit.
 4. Maps those commits to pull requests, including the PR that was just merged.
 5. Writes release notes with:
-   - release PR number, title, and date
-   - each included PR: number, title, and developer
-   - a Full Changelog compare link (previous stable → new stable)
-   - contributor profiles (avatars and GitHub links)
+  - release PR number, title, and date
+  - each included PR: number, title, and developer
+  - a Full Changelog compare link (previous stable → new stable)
+  - contributor profiles (avatars and GitHub links)
 6. Tags `main` and publishes a GitHub Release.
 
 Per-channel tags (`vX.Y.Z-alpha` on `development`, `vX.Y.Z-beta` on `staging`) remain in the workflow as commented code, marked `Restore after confirmation`.
@@ -64,55 +64,14 @@ any branch
 
 Merges into `development` or `staging` do **not** create a release while alpha/beta is commented out.
 
-Example notes:
-
-```markdown
-## Release Information
-
-- **Release PR:** #12 — Fix login timeout
-- **Release Date:** 2026-09-15
-
-## Pull Requests
-
-- #12 — Fix login timeout — [@alice](https://github.com/alice)
-
-## Full Changelog
-
-**Full Changelog:** [v1.0.3...v1.0.4](https://github.com/owner/repo/compare/v1.0.3...v1.0.4)
-
-## Contributors
-
-[@alice](https://github.com/alice)
-```
-
----
-
-## Branch convention
-
-| Branch | Role | Release today |
-| --- | --- | --- |
-| `main` | Production / stable | Yes — next `vX.Y.Z` |
-| `staging` | Pre-production | No (beta code is commented out) |
-| `development` | Integration | No (alpha code is commented out) |
-| `hotfix/*` | Urgent production fixes | Yes, if the PR is merged into `main` |
-
-Planned (commented in the workflow, not running):
-
-| Target | Tag |
-| --- | --- |
-| `development` | `vX.Y.Z-alpha` (prerelease) |
-| `staging` | `vX.Y.Z-beta` (prerelease) |
-| `main` | `vX.Y.Z` |
-
----
-
 ## Limitations
 
-- **Only a merged PR into `main` creates a release.** Direct pushes to `main` do not. Closed-but-unmerged PRs do nothing.
-- **Merges into `development` or `staging` do not release** until the commented alpha/beta blocks are restored.
-- **Every merge into `main` publishes a new stable release.** Merge one PR at a time and wait for the workflow to finish so tags do not race.
+- **Only a merged PR into** `main` **creates a release.** Direct pushes to `main` do not. Closed-but-unmerged PRs do nothing.
+- **Merges into** `development` **or** `staging` **do not release** until the commented alpha/beta blocks are restored.
+- **Every merge into** `main` **publishes a new stable release.** Merge one PR at a time and wait for the workflow to finish so tags do not race.
 - **Versioning is patch-only.** `v1.0.3` becomes `v1.0.4`. There is no major / minor bump.
-- **`package.json` is not updated.** Only the git tag and GitHub Release change.
-- **Only exact `vX.Y.Z` tags count as stable.** Tags like `v1.0.3-alpha` are ignored for the main bump. A missing stable tag is treated as `v0.0.0`; `git log` needs a real previous tag when one exists.
+- `package.json` **is not updated.** Only the git tag and GitHub Release change.
+- **Only exact** `vX.Y.Z` **tags count as stable.** Tags like `v1.0.3-alpha` are ignored for the main bump. A missing stable tag is treated as `v0.0.0`; `git log` needs a real previous tag when one exists.
 - **Notes list PR number, title, and author.** Commits with no linked PR may be omitted.
 - **Releases are published immediately.** There is no draft, approval, test, build, or deploy step.
+
