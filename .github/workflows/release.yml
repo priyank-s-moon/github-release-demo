@@ -273,7 +273,7 @@ jobs:
 
                   if author:
                       lines.append(
-                          f"- #{number} — {title} — [@{author}](https://github.com/{author})"
+                          f"- #{number} - {title} - [@{author}](https://github.com/{author})"
                       )
                   else:
                       lines.append(f"- #{number} — {title}")
