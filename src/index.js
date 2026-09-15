@@ -3,5 +3,3 @@ function getMessage() {
 }
 
 console.log(getMessage());
-
-//development branch added for testing
