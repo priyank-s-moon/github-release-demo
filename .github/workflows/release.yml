@@ -5,8 +5,9 @@ on:
     types:
       - closed
     branches:
-      - development
-      - staging
+      # Restore after confirmation:
+      # - development
+      # - staging
       - main
 
 permissions:
@@ -19,7 +20,12 @@ concurrency:
 
 jobs:
   release:
-    if: github.event.pull_request.merged == true
+    # Main-only until alpha/beta channels are confirmed.
+    # Restore after confirmation:
+    # if: github.event.pull_request.merged == true
+    if: >
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main'
 
     runs-on: ubuntu-latest
 
@@ -49,50 +55,59 @@ jobs:
           echo "Target branch: $BASE_BRANCH"
           echo "Source branch: $HEAD_BRANCH"
 
-          latest_alpha=$(
-            git tag --list 'v*-alpha' --sort=-version:refname | head -n 1
-          )
-          latest_beta=$(
-            git tag --list 'v*-beta' --sort=-version:refname | head -n 1
-          )
           latest_stable=$(
             git tag --list 'v*' --sort=-version:refname \
               | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
               | head -n 1 || true
           )
 
-          echo "Latest alpha: ${latest_alpha:-none}"
-          echo "Latest beta: ${latest_beta:-none}"
+          # Restore after confirmation (alpha / beta channel lookup):
+          # latest_alpha=$(
+          #   git tag --list 'v*-alpha' --sort=-version:refname | head -n 1
+          # )
+          # latest_beta=$(
+          #   git tag --list 'v*-beta' --sort=-version:refname | head -n 1
+          # )
+          # echo "Latest alpha: ${latest_alpha:-none}"
+          # echo "Latest beta: ${latest_beta:-none}"
+
           echo "Latest stable: ${latest_stable:-none}"
 
-          if [ "$BASE_BRANCH" = "development" ]; then
-            channel="alpha"
-            suffix="-alpha"
-            prerelease="true"
-            previous_tag="${latest_alpha:-v0.0.0-alpha}"
-          elif [ "$BASE_BRANCH" = "staging" ]; then
-            channel="beta"
-            suffix="-beta"
-            prerelease="true"
-            previous_tag="${latest_beta:-v0.0.0-beta}"
-          else
-            channel="stable"
-            suffix=""
-            prerelease="false"
-            previous_tag="${latest_stable:-v0.0.0}"
-          fi
+          # Restore after confirmation (per-branch channel selection):
+          # if [ "$BASE_BRANCH" = "development" ]; then
+          #   channel="alpha"
+          #   suffix="-alpha"
+          #   prerelease="true"
+          #   previous_tag="${latest_alpha:-v0.0.0-alpha}"
+          # elif [ "$BASE_BRANCH" = "staging" ]; then
+          #   channel="beta"
+          #   suffix="-beta"
+          #   prerelease="true"
+          #   previous_tag="${latest_beta:-v0.0.0-beta}"
+          # else
+          #   channel="stable"
+          #   suffix=""
+          #   prerelease="false"
+          #   previous_tag="${latest_stable:-v0.0.0}"
+          # fi
 
-          # Changelog compare follows the source branch when that
-          # branch has its own channel tag; otherwise use this channel.
-          if [ "$HEAD_BRANCH" = "development" ] && [ -n "$latest_alpha" ]; then
-            compare_from="$latest_alpha"
-          elif [ "$HEAD_BRANCH" = "staging" ] && [ -n "$latest_beta" ]; then
-            compare_from="$latest_beta"
-          elif [ "$HEAD_BRANCH" = "main" ] && [ -n "$latest_stable" ]; then
-            compare_from="$latest_stable"
-          else
-            compare_from="$previous_tag"
-          fi
+          channel="stable"
+          suffix=""
+          prerelease="false"
+          previous_tag="${latest_stable:-v0.0.0}"
+
+          # Restore after confirmation (changelog compare by source branch):
+          # if [ "$HEAD_BRANCH" = "development" ] && [ -n "$latest_alpha" ]; then
+          #   compare_from="$latest_alpha"
+          # elif [ "$HEAD_BRANCH" = "staging" ] && [ -n "$latest_beta" ]; then
+          #   compare_from="$latest_beta"
+          # elif [ "$HEAD_BRANCH" = "main" ] && [ -n "$latest_stable" ]; then
+          #   compare_from="$latest_stable"
+          # else
+          #   compare_from="$previous_tag"
+          # fi
+
+          compare_from="$previous_tag"
 
           version="${previous_tag#v}"
           version="${version%-alpha}"
@@ -322,9 +337,6 @@ jobs:
               f"- **Release PR:** #{release_pr_number} — {release_pr_title}"
           )
           lines.append(f"- **Release Date:** {release_date}")
-          lines.append(f"- **Channel:** `{channel}`")
-          lines.append(f"- **Source Branch:** `{source_branch}`")
-          lines.append(f"- **Target Branch:** `{target_branch}`")
           lines.append("")
 
           lines.append("## Pull Requests")
